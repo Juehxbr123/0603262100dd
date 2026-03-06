@@ -3,7 +3,7 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 
-const PORT = 3000;
+const PORT = Number(process.env.PORT || 3000);
 const TURN_MS = 30000;
 const REJOIN_GRACE_MS = 30000;
 const FINISH_TO_LOBBY_MS = 4500;
@@ -127,7 +127,59 @@ function setUserMetaFromProfile(userId, profile) {
   saveStoreAtomic(balanceStore);
 }
 
+const PAYMENT_ROUTES = new Set([
+  "/pay/stars/link",
+  "/pay/ton/order",
+  "/pay/ton/confirm",
+  "/pay/ton/wallet-balance"
+]);
+
+function getRequestPath(reqUrl) {
+  try {
+    const u = new URL(reqUrl || "/", "http://localhost");
+    const p = u.pathname.replace(/\/+$/, "");
+    return p || "/";
+  } catch {
+    return "/";
+  }
+}
+
+function toApiPath(pathname) {
+  if (pathname === "/api") return "/";
+  return pathname.startsWith("/api/") ? pathname.slice(4) : pathname;
+}
+
+function writeJson(res, code, data, extraHeaders = {}) {
+  res.writeHead(code, { "Content-Type": "application/json", ...extraHeaders });
+  res.end(JSON.stringify(data));
+}
+
+function getPublicBaseUrl() {
+  const raw = String(process.env.PUBLIC_APP_URL || "https://durak.clown-on-stonks.fun/").trim();
+  const withProto = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+  return withProto.replace(/\/+$/, "");
+}
+
 const server = http.createServer((req, res) => {
+  const pathname = getRequestPath(req.url);
+  const apiPath = toApiPath(pathname);
+
+  if (PAYMENT_ROUTES.has(apiPath) && req.method === "OPTIONS") {
+    res.writeHead(204, {
+      "Access-Control-Allow-Origin": req.headers.origin || "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type"
+    });
+    res.end();
+    return;
+  }
+
+  if (PAYMENT_ROUTES.has(apiPath) && req.method !== "POST") {
+    console.info("[pay] method mismatch", req.method, pathname, "origin=", req.headers.origin || "-");
+    writeJson(res, 405, { ok: false, error: "method_not_allowed", method: req.method, allow: ["POST"] }, { Allow: "POST" });
+    return;
+  }
+
   if (req.method === "POST" && req.url === "/admin/topup") {
     let body = "";
     req.on("data", (c) => { body += c; });
@@ -152,7 +204,7 @@ const server = http.createServer((req, res) => {
         pushBalanceToUser(userId);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: true, balances: getBalances(userId) }));
-      } catch {
+      } catch (e) {
         res.writeHead(400, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: false, error: "bad_json" }));
       }
@@ -195,7 +247,7 @@ const server = http.createServer((req, res) => {
         pushBalanceToUser(userId);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: true, userId, balances: getBalances(userId) }));
-      } catch {
+      } catch (e) {
         res.writeHead(400, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: false, error: "bad_json" }));
       }
@@ -203,7 +255,8 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  if (req.method === "POST" && req.url === "/pay/stars/link") {
+  if (req.method === "POST" && apiPath === "/pay/stars/link") {
+    console.info("[pay] stars link", pathname, "origin=", req.headers.origin || "-");
     let body = "";
     req.on("data", (c) => { body += c; });
     req.on("end", async () => {
@@ -242,7 +295,8 @@ const server = http.createServer((req, res) => {
         }
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: true, url: j.result }));
-      } catch {
+      } catch (e) {
+        console.error("[pay] stars link error", e?.message || e);
         res.writeHead(400, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: false, error: "bad_json" }));
       }
@@ -250,7 +304,8 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  if (req.method === "POST" && req.url === "/pay/ton/order") {
+  if (req.method === "POST" && apiPath === "/pay/ton/order") {
+    console.info("[pay] ton order", pathname, "origin=", req.headers.origin || "-");
     let body = "";
     req.on("data", (c) => { body += c; });
     req.on("end", () => {
@@ -263,7 +318,7 @@ const server = http.createServer((req, res) => {
         const payload = JSON.parse(body || "{}");
         const userId = safeStr(payload.userId || "", 128);
         const ton = Number(payload.ton);
-        if (!userId || !Number.isFinite(ton) || ton < 0.01) {
+        if (!userId || !Number.isFinite(ton) || ton < 0.1) {
           res.writeHead(400, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ ok: false, error: "bad_payload" }));
           return;
@@ -275,7 +330,8 @@ const server = http.createServer((req, res) => {
         saveOrdersAtomic(ordersStore);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: true, orderId, to: process.env.TON_RECEIVER, amountNano, comment }));
-      } catch {
+      } catch (e) {
+        console.error("[pay] ton order error", e?.message || e);
         res.writeHead(400, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: false, error: "bad_json" }));
       }
@@ -283,7 +339,8 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  if (req.method === "POST" && req.url === "/pay/ton/confirm") {
+  if (req.method === "POST" && apiPath === "/pay/ton/confirm") {
+    console.info("[pay] ton confirm", pathname, "origin=", req.headers.origin || "-");
     let body = "";
     req.on("data", (c) => { body += c; });
     req.on("end", async () => {
@@ -350,14 +407,16 @@ const server = http.createServer((req, res) => {
         pushBalanceToUser(userId);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: true, balances: getBalances(userId) }));
-      } catch {
+      } catch (e) {
+        console.error("[pay] ton confirm error", e?.message || e);
         res.writeHead(400, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: false, error: "bad_json" }));
       }
     });
     return;
   }
-  if (req.method === "POST" && req.url === "/pay/ton/wallet-balance") {
+  if (req.method === "POST" && apiPath === "/pay/ton/wallet-balance") {
+    console.info("[pay] wallet balance", pathname, "origin=", req.headers.origin || "-");
     let body = "";
     req.on("data", (c) => { body += c; });
     req.on("end", async () => {
@@ -382,7 +441,8 @@ const server = http.createServer((req, res) => {
         const ton = Number(nano) / 1e9;
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: true, ton: roundMoney(ton) }));
-      } catch {
+      } catch (e) {
+        console.error("[pay] wallet balance error", e?.message || e);
         res.writeHead(400, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: false, error: "bad_json" }));
       }
@@ -390,21 +450,27 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  if (req.method === "GET" && req.url === "/tonconnect-manifest.json") {
+  if (req.method === "GET" && (pathname === "/tonconnect-manifest.json" || pathname === "/api/tonconnect-manifest.json")) {
+    const base = getPublicBaseUrl();
     const fallback = {
-      url: process.env.PUBLIC_APP_URL || "https://example.com",
-      name: "303Dura",
-      iconUrl: (process.env.PUBLIC_APP_URL || "https://example.com") + "/icon.png",
-      termsOfUseUrl: process.env.TERMS_URL || (process.env.PUBLIC_APP_URL || "https://example.com"),
-      privacyPolicyUrl: process.env.PRIVACY_URL || (process.env.PUBLIC_APP_URL || "https://example.com")
+      url: base + "/",
+      name: "Durak Mini App",
+      iconUrl: base + "/icon.svg",
+      termsOfUseUrl: process.env.TERMS_URL || (base + "/terms"),
+      privacyPolicyUrl: process.env.PRIVACY_URL || (base + "/privacy")
     };
     let manifest = fallback;
     try {
       const local = JSON.parse(fs.readFileSync(path.join(__dirname, "tonconnect-manifest.json"), "utf8"));
       manifest = { ...fallback, ...local };
     } catch {}
+    console.info("[manifest] served", pathname, "base=", getPublicBaseUrl());
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify(manifest));
+    return;
+  }
+  if (pathname.startsWith("/api/")) {
+    writeJson(res, 404, { ok: false, error: "not_found", path: pathname });
     return;
   }
   res.writeHead(404);
