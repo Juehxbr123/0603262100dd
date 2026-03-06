@@ -10,8 +10,8 @@
 
   <style>
     :root{
-      --bg:#0b3d2e;
-      --felt:#115842;
+      --bg:#050b17;
+      --felt:#0b1d35;
       --shadow:0 10px 30px rgba(0,0,0,.35);
 
       --safe-t: env(safe-area-inset-top);
@@ -32,7 +32,7 @@
     html,body{height:100%; overflow:hidden; background:var(--bg); overscroll-behavior: none;}
     body{
       margin:0;
-      background: radial-gradient(120% 120% at 50% 0%, var(--felt), var(--bg));
+      background: radial-gradient(120% 120% at 50% 0%, #0d3f59, var(--felt) 48%, var(--bg));
       color:#f8fafc;
       font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Arial;
       -webkit-tap-highlight-color: transparent;
@@ -136,8 +136,8 @@
 
     /* Common UI */
     .cardPanel{
-      background: rgba(19,31,27,.84);
-      border: 1px solid rgba(255,255,255,.12);
+      background: linear-gradient(180deg, rgba(10,24,43,.72), rgba(6,16,29,.65));
+      border: 1px solid rgba(118,235,255,.22);
       border-radius: 18px;
       box-shadow: var(--shadow);
       padding: 14px;
@@ -204,7 +204,7 @@
       gap: 10px 12px;
       align-items:stretch;
     }
-    .btn.blue{background: linear-gradient(180deg,#38bdf8,#0284c7); color:#02131b;}
+    .btn.blue{background: linear-gradient(180deg,#59e3ff,#0ea5e9); color:#031424; box-shadow:0 0 16px rgba(56,189,248,.35);}
     .btn.green{background: linear-gradient(180deg,#34d399,#059669); color:#06120c;}
     .btn.orange{background: linear-gradient(180deg,#fbbf24,#b45309); color:#1a1200;}
     .btn.gray{background: linear-gradient(180deg,#94a3b8,#64748b); color:#0b1220;}
@@ -823,6 +823,13 @@
     .resultTitle{ font-weight: 1000; font-size: 22px; margin-bottom: 8px; }
     .resultMsg{ opacity:.9; margin-bottom: 12px; }
 
+    .overlayModal{position:fixed; inset:0; display:none; align-items:center; justify-content:center; background:rgba(2,8,20,.56); backdrop-filter:blur(10px); z-index:1200; padding:16px;}
+    .modalCard{width:min(520px,92vw); border-radius:18px; border:1px solid rgba(110,231,255,.35); background:linear-gradient(180deg,rgba(9,26,41,.92),rgba(7,17,31,.9)); box-shadow:0 16px 45px rgba(0,185,255,.25); padding:16px;}
+    .toastStack{position:fixed; top:calc(var(--safe-t) + 10px); right:12px; display:flex; flex-direction:column; gap:8px; z-index:1300;}
+    .toast{padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,.2); background:rgba(8,17,28,.93); color:#dff7ff; font-size:13px; box-shadow:0 10px 20px rgba(0,0,0,.35);}
+    .toast.success{border-color:rgba(52,211,153,.45);}
+    .toast.error{border-color:rgba(251,113,133,.45);}
+
     /* Touch drag ghost */
     .ghost{
       position: fixed;
@@ -903,11 +910,12 @@
         <div class="muted" id="balanceBreakdown" style="margin-top:6px;">TON: 0 • STARS: 0</div>
         <div class="row" style="margin-top:8px;">
           <button class="btn gray" id="btnTopupTon">Пополнить TON</button>
+          <button class="btn gray" id="btnDisconnectWallet" style="display:none;">Disconnect</button>
           <div class="muted" id="tonWalletInfo">Кошелёк не подключен</div>
           <div class="muted" id="tonWalletBalanceInfo" style="font-size:12px;opacity:.8;">Баланс кошелька: —</div>
         </div>
         <div class="row" id="tonTopupControls" style="margin-top:8px; display:none;">
-          <input class="input" id="topupTonInput" type="number" min="0.01" step="0.01" value="0.01" style="max-width:120px;" />
+          <input class="input" id="topupTonInput" type="number" min="0.1" step="0.1" value="0.1" style="max-width:120px;" />
           <button class="btn blue" id="btnPayTon">Пополнить TON (депозит)</button>
         </div>
         <div class="topupPanel">
@@ -1107,6 +1115,7 @@
         <div class="trumpBadge" id="trumpBadge">?</div>
         <div class="deckCount" id="deckCount">0</div>
       </div>
+      <div class="stakeBadge" id="stakeBadge">💎 0</div>
     </div>
 
     <div class="handWrap">
@@ -1149,6 +1158,17 @@
     </div>
   </div>
 
+
+  <div class="overlayModal" id="uiModal" style="display:none;">
+    <div class="modalCard">
+      <div class="resultTitle" id="uiModalTitle">Статус</div>
+      <div class="muted" id="uiModalText"></div>
+      <div class="row" id="uiModalActions" style="margin-top:12px;"></div>
+    </div>
+  </div>
+
+  <div class="toastStack" id="toastStack"></div>
+
 <script>
   // ===== Config
   const BOT_LINK = "https://t.me/evil_cardsbot";
@@ -1156,7 +1176,26 @@
 
   const WS_URL = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws";
   const API_ORIGIN = (window.__API_ORIGIN__ || localStorage.getItem("evil_api_origin") || "").trim();
-  const API_BASE = API_ORIGIN ? API_ORIGIN.replace(/\/$/, "") : "";
+  const API_PREFIX = (window.__API_PREFIX__ || localStorage.getItem("evil_api_prefix") || "").trim();
+
+  function normalizePrefix(prefix) {
+    if (!prefix) return "";
+    return prefix.startsWith("/") ? prefix : `/${prefix}`;
+  }
+
+  function buildApiCandidates(path) {
+    const cleanPath = String(path || "").startsWith("/") ? String(path) : `/${path}`;
+    const candidates = [];
+    if (/^https?:\/\//i.test(API_ORIGIN)) {
+      candidates.push(API_ORIGIN.replace(/\/$/, "") + cleanPath);
+    } else {
+      candidates.push(location.origin + cleanPath);
+      const pref = normalizePrefix(API_PREFIX);
+      if (pref && pref !== "/") candidates.push(location.origin + pref + cleanPath);
+      if (!pref) candidates.push(location.origin + "/api" + cleanPath);
+    }
+    return [...new Set(candidates)];
+  }
 
   // ===== Telegram detect
   const tg = window.Telegram?.WebApp;
@@ -1256,6 +1295,62 @@
     balanceBreakdown.textContent = `TON: ${ton.toFixed(2)} • STARS: ${Math.floor(stars)}`;
   }
   renderBalance();
+
+  const uiModal = document.getElementById("uiModal");
+  const uiModalTitle = document.getElementById("uiModalTitle");
+  const uiModalText = document.getElementById("uiModalText");
+  const uiModalActions = document.getElementById("uiModalActions");
+  const toastStack = document.getElementById("toastStack");
+
+  function showToast(text, type = "") {
+    if (!toastStack) return;
+    const t = document.createElement("div");
+    t.className = `toast ${type}`.trim();
+    t.textContent = text;
+    toastStack.appendChild(t);
+    setTimeout(() => t.remove(), 2800);
+  }
+
+  function openModal({ title, text, actions = [] }) {
+    uiModalTitle.textContent = title || "Статус";
+    uiModalText.textContent = text || "";
+    uiModalActions.innerHTML = "";
+    for (const action of actions) {
+      const b = document.createElement("button");
+      b.className = `btn ${action.variant || "blue"}`;
+      b.textContent = action.label;
+      b.onclick = () => {
+        uiModal.style.display = "none";
+        action.onClick?.();
+      };
+      uiModalActions.appendChild(b);
+    }
+    uiModal.style.display = "flex";
+  }
+
+  function openTopupModal(currency = "ton") {
+    setTab("profile");
+    uiModal.style.display = "none";
+    if (currency === "ton") {
+      btnTopupTon.click();
+      topupTonInput.focus();
+    } else {
+      topupStarsInput.focus();
+    }
+  }
+
+  function openInsufficientFundsModal(currency, stake, source = "") {
+    const currencyLabel = currency === "stars" ? "⭐" : "💎";
+    openModal({
+      title: "Недостаточно средств",
+      text: `Для ${source === "quick" ? "быстрой игры" : "входа/создания лобби"} требуется ${currencyLabel} ${stake}.`,
+      actions: [
+        { label: "Пополнить баланс", variant: "blue", onClick: () => openTopupModal(currency) },
+        { label: "Позже", variant: "gray", onClick: () => {} }
+      ]
+    });
+  }
+
   try {
     const last = JSON.parse(localStorage.getItem("evil_last_result") || "null");
     const row = document.getElementById("lastGameInfo");
@@ -1324,8 +1419,8 @@
     localStorage.setItem("evil_roomId", "");
     localStorage.setItem("evil_roomPass", "");
     if (message) {
+      showToast(message, "error");
       showError(message);
-      try { alert(message); } catch {}
     }
     if (disableReconnect) kickedOff = true;
     const wrap = document.getElementById("gameWrap");
@@ -1408,6 +1503,11 @@
         }
         linkedWalletAddress = String(msg.walletAddress || linkedWalletAddress || "");
         renderBalance();
+        if (!createCurrencyTouched) {
+          if (currentBalances.ton >= Math.max(1, Number(createStake || 1))) createCurrency = "ton";
+          else if (currentBalances.stars >= 50) createCurrency = "stars";
+          renderStakeUi();
+        }
         refreshWalletBalanceUi().finally(syncTonTopupUi);
         syncTonTopupUi();
         return;
@@ -1484,8 +1584,7 @@
     } else if (currentBalances.stars >= 50) {
       sendMsg({ type:"quick_match", userKey, profile, stake: 50, currency:"stars" });
     } else {
-      const go = confirm("Недостаточно средств для быстрой игры. Перейти к пополнению?");
-      if (go) setTab("profile");
+      openInsufficientFundsModal("ton", 1, "quick");
     }
   };
   btnQuickCancel.onclick = () => {
@@ -1493,6 +1592,7 @@
   };
 
   const btnTopupTon = document.getElementById("btnTopupTon");
+  const btnDisconnectWallet = document.getElementById("btnDisconnectWallet");
   const btnTopupStars = document.getElementById("btnTopupStars");
   const btnPayTon = document.getElementById("btnPayTon");
   const topupTonInput = document.getElementById("topupTonInput");
@@ -1507,13 +1607,15 @@
   function formatWalletAddress(addr) {
     const raw = String(addr || "").trim();
     if (!raw) return "";
+    let norm = raw;
     try {
       if (window.TonWeb?.Address) {
         const a = new TonWeb.Address(raw);
-        return a.toString(true, true, true);
+        norm = a.toString(true, true, true);
       }
     } catch {}
-    return raw;
+    if (norm.length <= 8) return norm;
+    return `${norm.slice(0, 4)}...${norm.slice(-4)}`;
   }
   async function refreshWalletBalanceUi() {
     if (!linkedWalletAddress) {
@@ -1531,23 +1633,62 @@
       tonWalletBalanceInfo.textContent = `Баланс кошелька: ${walletTonBalance.toFixed(2)} TON`;
     } catch (e) {
       tonWalletBalanceInfo.textContent = "Баланс кошелька: недоступен";
+      tonOrderInfo.textContent = "Не удалось получить баланс кошелька: " + (e?.message || "ошибка");
     }
   }
-  const tonConnectManifestUrl = (API_BASE || location.origin) + "/tonconnect-manifest.json";
+  const tonConnectManifestUrl = location.origin + "/tonconnect-manifest.json";
+  console.info("[tonconnect] manifest url", tonConnectManifestUrl);
   const tonConnectUI = (window.TON_CONNECT_UI)
     ? new TON_CONNECT_UI.TonConnectUI({ manifestUrl: tonConnectManifestUrl })
     : null;
 
-  async function safeFetchJson(url, options) {
-    const finalUrl = /^https?:\/\//.test(url) ? url : (API_BASE + url);
-    const r = await fetch(finalUrl, options);
-    const text = await r.text();
-    let data = null;
-    try { data = JSON.parse(text); }
-    catch {
-      throw new Error(r.ok ? "Сервер вернул некорректный ответ" : `Ошибка ${r.status}: некорректный ответ сервера`);
+  tonConnectUI?.onStatusChange(async (wallet) => {
+    linkedWalletAddress = String(wallet?.account?.address || "");
+    sendMsg({ type:"wallet_bind", walletAddress: linkedWalletAddress, userKey });
+    if (linkedWalletAddress) await refreshWalletBalanceUi();
+    syncTonTopupUi();
+  });
+
+  async function safeFetchJson(url, options = {}) {
+    if (/^https?:\/\//.test(url)) {
+      const r = await fetch(url, { ...options, headers: { "Content-Type": "application/json", ...(options.headers || {}) } });
+      const txt = await r.text();
+      let j = null;
+      try { j = txt ? JSON.parse(txt) : null; } catch {}
+      if (!r.ok || (j && j.ok === false)) throw new Error(`HTTP ${r.status} ${url}: ${j?.error || txt || "request_failed"}`);
+      return j || { ok: true };
     }
-    return data;
+
+    const candidates = buildApiCandidates(url);
+    let lastError = null;
+    for (const finalUrl of candidates) {
+      try {
+        console.info("[api] request", options.method || "GET", finalUrl);
+        const reqOptions = { ...options, headers: { "Content-Type": "application/json", ...(options.headers || {}) } };
+        const r = await fetch(finalUrl, reqOptions);
+        const text = await r.text();
+        const isJson = (r.headers.get("content-type") || "").includes("application/json");
+        let data = null;
+        if (text && isJson) {
+          try { data = JSON.parse(text); } catch {}
+        }
+        if (!r.ok || (data && data.ok === false)) {
+          const msg = data?.error || data?.message || (text && !isJson ? text.slice(0, 180) : `HTTP ${r.status}`);
+          const err = new Error(`HTTP ${r.status} ${finalUrl}: ${msg}`);
+          err.status = r.status;
+          err.url = finalUrl;
+          err.raw = text;
+          throw err;
+        }
+        if (text && !isJson) throw new Error(`Сервер вернул не-JSON ответ: ${finalUrl}`);
+        return data || { ok: true };
+      } catch (e) {
+        lastError = e;
+        const retriable = [404, 405, 502, 503, 504].includes(Number(e?.status || 0));
+        if (!retriable) break;
+      }
+    }
+    throw new Error(lastError?.message || "network_request_failed");
   }
 
   function syncTonTopupUi() {
@@ -1556,9 +1697,26 @@
     tonWalletInfo.textContent = connected
       ? `Кошелёк: ${formatWalletAddress(linkedWalletAddress || tonConnectUI?.account?.address || "подключен")}`
       : "Кошелёк не подключен";
+    if (btnDisconnectWallet) btnDisconnectWallet.style.display = connected ? "inline-flex" : "none";
     if (!connected) tonWalletBalanceInfo.textContent = "Баланс кошелька: —";
   }
   syncTonTopupUi();
+
+
+  async function buildTonCommentPayload(comment) {
+    const text = String(comment || "");
+    if (!text) return undefined;
+    try {
+      const cell = new TonWeb.boc.Cell();
+      cell.bits.writeUint(0, 32);
+      cell.bits.writeBytes(TonWeb.utils.stringToBytes(text));
+      const boc = await cell.toBoc(false);
+      return TonWeb.utils.bytesToBase64(boc);
+    } catch (e) {
+      console.warn("[ton] payload encode fallback", e?.message || e);
+      return btoa(unescape(encodeURIComponent(text)));
+    }
+  }
 
   async function pollTonConfirm(orderId, userId) {
     const started = Date.now();
@@ -1566,7 +1724,7 @@
       try {
         await safeFetchJson("/pay/ton/confirm", {
           method: "POST",
-          headers: { "Content-Type": "text/plain;charset=UTF-8" },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ orderId, userId })
         });
         return true;
@@ -1583,15 +1741,34 @@
     try {
       const j = await safeFetchJson("/pay/stars/link", {
         method: "POST",
-        headers: { "Content-Type": "text/plain;charset=UTF-8" },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ userId, stars })
       });
       if (!j.url) throw new Error("stars_link_failed");
-      if (tg && typeof tg.openInvoice === "function") tg.openInvoice(j.url);
-      else tonOrderInfo.textContent = "Оплата доступна только в Telegram.";
+      if (tg && typeof tg.openInvoice === "function") {
+        tg.openInvoice(j.url, async (status) => {
+          if (status === "paid") {
+            showToast("Оплата Stars успешна", "success");
+            requestLists();
+          } else if (status === "failed") {
+            showToast("Оплата Stars не завершена", "error");
+          }
+        });
+      } else tonOrderInfo.textContent = "Оплата доступна только в Telegram.";
     } catch (e) {
       tonOrderInfo.textContent = "Ошибка пополнения ⭐: " + (e?.message || "неизвестная ошибка");
     }
+  };
+
+  btnDisconnectWallet.onclick = async () => {
+    try {
+      await tonConnectUI?.disconnect();
+    } catch {}
+    linkedWalletAddress = "";
+    walletTonBalance = null;
+    sendMsg({ type:"wallet_bind", walletAddress: "", userKey });
+    tonOrderInfo.textContent = "";
+    syncTonTopupUi();
   };
 
   btnTopupTon.onclick = async () => {
@@ -1607,21 +1784,22 @@
 
   btnPayTon.onclick = async () => {
     const userId = (inTG && tg.initDataUnsafe?.user?.id) ? String(tg.initDataUnsafe.user.id) : String(userKey || "").replace(/^tg:/, "");
-    const ton = Math.max(0.01, Math.round(Number(topupTonInput.value || 0) * 100) / 100);
+    const ton = Math.max(0.1, Math.round(Number(topupTonInput.value || 0) * 100) / 100);
     topupTonInput.value = ton.toFixed(2);
     try {
       if (!tonConnectUI) throw new Error("ton_connect_missing");
       if (!tonConnectUI.connected) await tonConnectUI.openModal();
       const ord = await safeFetchJson("/pay/ton/order", {
         method: "POST",
-        headers: { "Content-Type": "text/plain;charset=UTF-8" },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ userId, ton })
       });
       pendingTonOrder = ord;
       tonOrderInfo.textContent = `Оплата TON: ${ton} отправлена...`;
+      const payload = await buildTonCommentPayload(ord.comment || "");
       await tonConnectUI.sendTransaction({
         validUntil: Math.floor(Date.now() / 1000) + 600,
-        messages: [{ address: ord.to, amount: ord.amountNano }]
+        messages: [{ address: ord.to, amount: ord.amountNano, ...(payload ? { payload } : {}) }]
       });
       const ok = await pollTonConfirm(ord.orderId, userId);
       tonOrderInfo.textContent = ok ? `Вы пополнили ${ton} TON успешно` : "Не удалось подтвердить TON за время ожидания";
@@ -1640,7 +1818,8 @@
   let createTransfer = false;
   let createWinMode = "classic";
   let createThrowInMode = "all";
-  let createCurrency = "ton";
+  let createCurrency = localStorage.getItem("evil_last_currency") || "ton";
+  let createCurrencyTouched = false;
   let createStake = 1;
 
   const btnP2 = document.getElementById("btnP2");
@@ -1679,8 +1858,8 @@
     else createStake = Math.max(1, Math.floor(createStake / 100));
     createCurrency = target;
   }
-  btnCurTon.onclick = () => { convertStake("ton"); renderStakeUi(); };
-  btnCurStars.onclick = () => { convertStake("stars"); renderStakeUi(); };
+  btnCurTon.onclick = () => { createCurrencyTouched = true; convertStake("ton"); localStorage.setItem("evil_last_currency", "ton"); renderStakeUi(); };
+  btnCurStars.onclick = () => { createCurrencyTouched = true; convertStake("stars"); localStorage.setItem("evil_last_currency", "stars"); renderStakeUi(); };
   stakeInput.oninput = () => {
     createStake = Number(stakeInput.value || 0);
     if (createCurrency === "ton") {
@@ -1820,6 +1999,11 @@
       finalStake = Math.max(50, Math.round(finalStake / 50) * 50);
     }
 
+    if (Number(currentBalances[finalCurrency] || 0) < Number(finalStake)) {
+      openInsufficientFundsModal(finalCurrency, finalStake, "create");
+      return;
+    }
+
     sendMsg({
       type:"create_lobby",
       userKey,
@@ -1929,7 +2113,7 @@
         btn.textContent = "Войти";
         btn.disabled = !enoughBalance;
         btn.onclick = () => {
-          if (!enoughBalance) return alert("Недостаточно средств");
+          if (!enoughBalance) return openInsufficientFundsModal(it.currency || "ton", Number(it.stake || 0));
           roomId = it.id;
           localStorage.setItem("evil_roomId", roomId);
           roomPass = "";
@@ -1984,7 +2168,7 @@
         btn.textContent = "Войти";
         btn.disabled = !enoughBalance;
         btn.onclick = () => {
-          if (!enoughBalance) return alert("Недостаточно средств");
+          if (!enoughBalance) return openInsufficientFundsModal(it.currency || "ton", Number(it.stake || 0));
           pendingPrivateJoin = it;
           joinPasswordInput.value = "";
           passwordOverlay.style.display = "flex";
@@ -2017,8 +2201,14 @@
 
   btnResign.onclick = () => {
     if (!gameState) return;
-    if (!confirm("Вы уверены что хотите сдаться?")) return;
-    sendMsg({ type:"action", action:{ kind:"resign" } });
+    openModal({
+      title: "Сдаться?",
+      text: "Вы уверены, что хотите сдаться в этой игре?",
+      actions: [
+        { label: "Да", variant: "red", onClick: () => sendMsg({ type:"action", action:{ kind:"resign" } }) },
+        { label: "Нет", variant: "gray", onClick: () => {} }
+      ]
+    });
   };
 
   // ===== Game elements
@@ -2027,6 +2217,7 @@
   const handEl = document.getElementById("hand");
   const statusEl = document.getElementById("status");
   const modeBadges = document.getElementById("modeBadges");
+  const stakeBadge = document.getElementById("stakeBadge");
   const transferZone = document.getElementById("transferZone");
 
   const btnReady = document.getElementById("btnReady");
@@ -2351,8 +2542,10 @@
     transferZone.classList.remove("show");
     renderDiscardPile(null);
 
-    const ls = lobbyState.currency === "stars" ? `${lobbyState.stake} ⭐` : `${lobbyState.stake} TON`;
+    const isStars = lobbyState.currency === "stars";
+    const ls = isStars ? `⭐ ${lobbyState.stake}` : `💎 ${lobbyState.stake}`;
     statusEl.textContent = `Лобби: ${lobbyState.players.filter(p=>p.userKey).length}/${lobbyState.maxPlayers} • Ставка: ${ls}`;
+    if (stakeBadge) stakeBadge.textContent = ls;
     if (modeBadges) {
       modeBadges.innerHTML = "";
       modeBadges.appendChild(buildModeIcons(lobbyState));
@@ -2443,9 +2636,10 @@
     const anyOnTable = (gameState.table || []).some(p => p);
     const allDef = anyOnTable && (gameState.table || []).filter(Boolean).every(p => p.defend);
 
-    const gs = gameState.currency === "stars" ? `${gameState.stake} ⭐` : `${gameState.stake} TON`;
+    const gs = gameState.currency === "stars" ? `⭐ ${gameState.stake}` : `💎 ${gameState.stake}`;
     const baseStatus = gameState.phase === "finished" ? "" : (gameState.activeRole === me ? "Ваш ход" : "");
     statusEl.textContent = `${baseStatus}${baseStatus ? " • " : ""}Ставка: ${gs}`;
+    if (stakeBadge) stakeBadge.textContent = gs;
     if (modeBadges) {
       modeBadges.innerHTML = "";
       modeBadges.style.display = "none";
