@@ -127,7 +127,53 @@ function setUserMetaFromProfile(userId, profile) {
   saveStoreAtomic(balanceStore);
 }
 
+const PAYMENT_ROUTES = new Set([
+  "/pay/stars/link",
+  "/pay/ton/order",
+  "/pay/ton/confirm",
+  "/pay/ton/wallet-balance"
+]);
+
+function getRequestPath(reqUrl) {
+  try {
+    const u = new URL(reqUrl || "/", "http://localhost");
+    const p = u.pathname.replace(/\/+$/, "");
+    return p || "/";
+  } catch {
+    return "/";
+  }
+}
+
+function toApiPath(pathname) {
+  if (pathname === "/api") return "/";
+  return pathname.startsWith("/api/") ? pathname.slice(4) : pathname;
+}
+
+function writeJson(res, code, data, extraHeaders = {}) {
+  res.writeHead(code, { "Content-Type": "application/json", ...extraHeaders });
+  res.end(JSON.stringify(data));
+}
+
 const server = http.createServer((req, res) => {
+  const pathname = getRequestPath(req.url);
+  const apiPath = toApiPath(pathname);
+
+  if (PAYMENT_ROUTES.has(apiPath) && req.method === "OPTIONS") {
+    res.writeHead(204, {
+      "Access-Control-Allow-Origin": req.headers.origin || "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type"
+    });
+    res.end();
+    return;
+  }
+
+  if (PAYMENT_ROUTES.has(apiPath) && req.method !== "POST") {
+    console.info("[pay] method mismatch", req.method, pathname);
+    writeJson(res, 405, { ok: false, error: "method_not_allowed", method: req.method, allow: ["POST"] }, { Allow: "POST" });
+    return;
+  }
+
   if (req.method === "POST" && req.url === "/admin/topup") {
     let body = "";
     req.on("data", (c) => { body += c; });
@@ -203,7 +249,8 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  if (req.method === "POST" && req.url === "/pay/stars/link") {
+  if (req.method === "POST" && apiPath === "/pay/stars/link") {
+    console.info("[pay] stars link", pathname);
     let body = "";
     req.on("data", (c) => { body += c; });
     req.on("end", async () => {
@@ -250,7 +297,8 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  if (req.method === "POST" && req.url === "/pay/ton/order") {
+  if (req.method === "POST" && apiPath === "/pay/ton/order") {
+    console.info("[pay] ton order", pathname);
     let body = "";
     req.on("data", (c) => { body += c; });
     req.on("end", () => {
@@ -263,7 +311,7 @@ const server = http.createServer((req, res) => {
         const payload = JSON.parse(body || "{}");
         const userId = safeStr(payload.userId || "", 128);
         const ton = Number(payload.ton);
-        if (!userId || !Number.isFinite(ton) || ton < 0.01) {
+        if (!userId || !Number.isFinite(ton) || ton < 0.1) {
           res.writeHead(400, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ ok: false, error: "bad_payload" }));
           return;
@@ -283,7 +331,8 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  if (req.method === "POST" && req.url === "/pay/ton/confirm") {
+  if (req.method === "POST" && apiPath === "/pay/ton/confirm") {
+    console.info("[pay] ton confirm", pathname);
     let body = "";
     req.on("data", (c) => { body += c; });
     req.on("end", async () => {
@@ -357,7 +406,8 @@ const server = http.createServer((req, res) => {
     });
     return;
   }
-  if (req.method === "POST" && req.url === "/pay/ton/wallet-balance") {
+  if (req.method === "POST" && apiPath === "/pay/ton/wallet-balance") {
+    console.info("[pay] wallet balance", pathname);
     let body = "";
     req.on("data", (c) => { body += c; });
     req.on("end", async () => {
@@ -390,7 +440,7 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  if (req.method === "GET" && req.url === "/tonconnect-manifest.json") {
+  if (req.method === "GET" && (pathname === "/tonconnect-manifest.json" || pathname === "/api/tonconnect-manifest.json")) {
     const fallback = {
       url: process.env.PUBLIC_APP_URL || "https://example.com",
       name: "303Dura",
@@ -405,6 +455,10 @@ const server = http.createServer((req, res) => {
     } catch {}
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify(manifest));
+    return;
+  }
+  if (pathname.startsWith("/api/")) {
+    writeJson(res, 404, { ok: false, error: "not_found", path: pathname });
     return;
   }
   res.writeHead(404);
