@@ -1624,9 +1624,11 @@
       tonWalletBalanceInfo.textContent = `Баланс кошелька: ${walletTonBalance.toFixed(2)} TON`;
     } catch (e) {
       tonWalletBalanceInfo.textContent = "Баланс кошелька: недоступен";
+      tonOrderInfo.textContent = "Не удалось получить баланс кошелька: " + (e?.message || "ошибка");
     }
   }
-  const tonConnectManifestUrl = (API_BASE || location.origin) + "/tonconnect-manifest.json";
+  const tonConnectManifestUrl = location.origin + "/tonconnect-manifest.json";
+  console.info("[tonconnect] manifest url", tonConnectManifestUrl);
   const tonConnectUI = (window.TON_CONNECT_UI)
     ? new TON_CONNECT_UI.TonConnectUI({ manifestUrl: tonConnectManifestUrl })
     : null;
@@ -1673,6 +1675,22 @@
     if (!connected) tonWalletBalanceInfo.textContent = "Баланс кошелька: —";
   }
   syncTonTopupUi();
+
+
+  async function buildTonCommentPayload(comment) {
+    const text = String(comment || "");
+    if (!text) return undefined;
+    try {
+      const cell = new TonWeb.boc.Cell();
+      cell.bits.writeUint(0, 32);
+      cell.bits.writeBytes(TonWeb.utils.stringToBytes(text));
+      const boc = await cell.toBoc(false);
+      return TonWeb.utils.bytesToBase64(boc);
+    } catch (e) {
+      console.warn("[ton] payload encode fallback", e?.message || e);
+      return btoa(unescape(encodeURIComponent(text)));
+    }
+  }
 
   async function pollTonConfirm(orderId, userId) {
     const started = Date.now();
@@ -1751,6 +1769,7 @@
       });
       pendingTonOrder = ord;
       tonOrderInfo.textContent = `Оплата TON: ${ton} отправлена...`;
+      const payload = await buildTonCommentPayload(ord.comment || "");
       await tonConnectUI.sendTransaction({
         validUntil: Math.floor(Date.now() / 1000) + 600,
         messages: [{ address: ord.to, amount: ord.amountNano, payload: btoa(unescape(encodeURIComponent(ord.comment || ""))) }]

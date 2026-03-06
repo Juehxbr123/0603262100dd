@@ -3,7 +3,7 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 
-const PORT = 3000;
+const PORT = Number(process.env.PORT || 3000);
 const TURN_MS = 30000;
 const REJOIN_GRACE_MS = 30000;
 const FINISH_TO_LOBBY_MS = 4500;
@@ -198,7 +198,7 @@ const server = http.createServer((req, res) => {
         pushBalanceToUser(userId);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: true, balances: getBalances(userId) }));
-      } catch {
+      } catch (e) {
         res.writeHead(400, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: false, error: "bad_json" }));
       }
@@ -241,7 +241,7 @@ const server = http.createServer((req, res) => {
         pushBalanceToUser(userId);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: true, userId, balances: getBalances(userId) }));
-      } catch {
+      } catch (e) {
         res.writeHead(400, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: false, error: "bad_json" }));
       }
@@ -289,7 +289,8 @@ const server = http.createServer((req, res) => {
         }
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: true, url: j.result }));
-      } catch {
+      } catch (e) {
+        console.error("[pay] stars link error", e?.message || e);
         res.writeHead(400, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: false, error: "bad_json" }));
       }
@@ -323,7 +324,8 @@ const server = http.createServer((req, res) => {
         saveOrdersAtomic(ordersStore);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: true, orderId, to: process.env.TON_RECEIVER, amountNano, comment }));
-      } catch {
+      } catch (e) {
+        console.error("[pay] ton order error", e?.message || e);
         res.writeHead(400, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: false, error: "bad_json" }));
       }
@@ -399,7 +401,8 @@ const server = http.createServer((req, res) => {
         pushBalanceToUser(userId);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: true, balances: getBalances(userId) }));
-      } catch {
+      } catch (e) {
+        console.error("[pay] ton confirm error", e?.message || e);
         res.writeHead(400, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: false, error: "bad_json" }));
       }
@@ -432,7 +435,8 @@ const server = http.createServer((req, res) => {
         const ton = Number(nano) / 1e9;
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: true, ton: roundMoney(ton) }));
-      } catch {
+      } catch (e) {
+        console.error("[pay] wallet balance error", e?.message || e);
         res.writeHead(400, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: false, error: "bad_json" }));
       }
@@ -442,17 +446,18 @@ const server = http.createServer((req, res) => {
 
   if (req.method === "GET" && (pathname === "/tonconnect-manifest.json" || pathname === "/api/tonconnect-manifest.json")) {
     const fallback = {
-      url: process.env.PUBLIC_APP_URL || "https://example.com",
-      name: "303Dura",
-      iconUrl: (process.env.PUBLIC_APP_URL || "https://example.com") + "/icon.png",
-      termsOfUseUrl: process.env.TERMS_URL || (process.env.PUBLIC_APP_URL || "https://example.com"),
-      privacyPolicyUrl: process.env.PRIVACY_URL || (process.env.PUBLIC_APP_URL || "https://example.com")
+      url: base + "/",
+      name: "Durak Mini App",
+      iconUrl: base + "/icon.svg",
+      termsOfUseUrl: process.env.TERMS_URL || (base + "/terms"),
+      privacyPolicyUrl: process.env.PRIVACY_URL || (base + "/privacy")
     };
     let manifest = fallback;
     try {
       const local = JSON.parse(fs.readFileSync(path.join(__dirname, "tonconnect-manifest.json"), "utf8"));
       manifest = { ...fallback, ...local };
     } catch {}
+    console.info("[manifest] served", pathname, "base=", getPublicBaseUrl());
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify(manifest));
     return;
