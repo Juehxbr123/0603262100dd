@@ -154,12 +154,6 @@ function writeJson(res, code, data, extraHeaders = {}) {
   res.end(JSON.stringify(data));
 }
 
-function getPublicBaseUrl() {
-  const raw = String(process.env.PUBLIC_APP_URL || "https://durak.clown-on-stonks.fun/").trim();
-  const withProto = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
-  return withProto.replace(/\/+$/, "");
-}
-
 const server = http.createServer((req, res) => {
   const pathname = getRequestPath(req.url);
   const apiPath = toApiPath(pathname);
@@ -175,7 +169,7 @@ const server = http.createServer((req, res) => {
   }
 
   if (PAYMENT_ROUTES.has(apiPath) && req.method !== "POST") {
-    console.info("[pay] method mismatch", req.method, pathname, "origin=", req.headers.origin || "-");
+    console.info("[pay] method mismatch", req.method, pathname);
     writeJson(res, 405, { ok: false, error: "method_not_allowed", method: req.method, allow: ["POST"] }, { Allow: "POST" });
     return;
   }
@@ -256,7 +250,7 @@ const server = http.createServer((req, res) => {
   }
 
   if (req.method === "POST" && apiPath === "/pay/stars/link") {
-    console.info("[pay] stars link", pathname, "origin=", req.headers.origin || "-");
+    console.info("[pay] stars link", pathname);
     let body = "";
     req.on("data", (c) => { body += c; });
     req.on("end", async () => {
@@ -305,7 +299,7 @@ const server = http.createServer((req, res) => {
   }
 
   if (req.method === "POST" && apiPath === "/pay/ton/order") {
-    console.info("[pay] ton order", pathname, "origin=", req.headers.origin || "-");
+    console.info("[pay] ton order", pathname);
     let body = "";
     req.on("data", (c) => { body += c; });
     req.on("end", () => {
@@ -340,7 +334,7 @@ const server = http.createServer((req, res) => {
   }
 
   if (req.method === "POST" && apiPath === "/pay/ton/confirm") {
-    console.info("[pay] ton confirm", pathname, "origin=", req.headers.origin || "-");
+    console.info("[pay] ton confirm", pathname);
     let body = "";
     req.on("data", (c) => { body += c; });
     req.on("end", async () => {
@@ -416,7 +410,7 @@ const server = http.createServer((req, res) => {
     return;
   }
   if (req.method === "POST" && apiPath === "/pay/ton/wallet-balance") {
-    console.info("[pay] wallet balance", pathname, "origin=", req.headers.origin || "-");
+    console.info("[pay] wallet balance", pathname);
     let body = "";
     req.on("data", (c) => { body += c; });
     req.on("end", async () => {
@@ -451,7 +445,6 @@ const server = http.createServer((req, res) => {
   }
 
   if (req.method === "GET" && (pathname === "/tonconnect-manifest.json" || pathname === "/api/tonconnect-manifest.json")) {
-    const base = getPublicBaseUrl();
     const fallback = {
       url: base + "/",
       name: "Durak Mini App",

@@ -1176,26 +1176,17 @@
 
   const WS_URL = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws";
   const API_ORIGIN = (window.__API_ORIGIN__ || localStorage.getItem("evil_api_origin") || "").trim();
-  const API_PREFIX = (window.__API_PREFIX__ || localStorage.getItem("evil_api_prefix") || "").trim();
+  const API_PREFIX = (window.__API_PREFIX__ || localStorage.getItem("evil_api_prefix") || "/api").trim();
 
-  function normalizePrefix(prefix) {
-    if (!prefix) return "";
-    return prefix.startsWith("/") ? prefix : `/${prefix}`;
-  }
-
-  function buildApiCandidates(path) {
-    const cleanPath = String(path || "").startsWith("/") ? String(path) : `/${path}`;
-    const candidates = [];
+  function normalizeApiBase(){
     if (/^https?:\/\//i.test(API_ORIGIN)) {
-      candidates.push(API_ORIGIN.replace(/\/$/, "") + cleanPath);
-    } else {
-      candidates.push(location.origin + cleanPath);
-      const pref = normalizePrefix(API_PREFIX);
-      if (pref && pref !== "/") candidates.push(location.origin + pref + cleanPath);
-      if (!pref) candidates.push(location.origin + "/api" + cleanPath);
+      return API_ORIGIN.replace(/\/$/, "");
     }
-    return [...new Set(candidates)];
+    const cleanPrefix = API_PREFIX ? (API_PREFIX.startsWith("/") ? API_PREFIX : `/${API_PREFIX}`) : "";
+    return (location.origin + cleanPrefix).replace(/\/$/, "");
   }
+
+  const API_BASE = normalizeApiBase();
 
   // ===== Telegram detect
   const tg = window.Telegram?.WebApp;
@@ -1649,46 +1640,29 @@
     syncTonTopupUi();
   });
 
-  async function safeFetchJson(url, options = {}) {
-    if (/^https?:\/\//.test(url)) {
-      const r = await fetch(url, { ...options, headers: { "Content-Type": "application/json", ...(options.headers || {}) } });
-      const txt = await r.text();
-      let j = null;
-      try { j = txt ? JSON.parse(txt) : null; } catch {}
-      if (!r.ok || (j && j.ok === false)) throw new Error(`HTTP ${r.status} ${url}: ${j?.error || txt || "request_failed"}`);
-      return j || { ok: true };
-    }
+  function buildApiPath(urlPath) {
+    if (/^https?:\/\//.test(urlPath)) return urlPath;
+    const clean = String(urlPath || "").startsWith("/") ? String(urlPath) : `/${urlPath}`;
+    return `${API_BASE}${clean}`;
+  }
 
-    const candidates = buildApiCandidates(url);
-    let lastError = null;
-    for (const finalUrl of candidates) {
-      try {
-        console.info("[api] request", options.method || "GET", finalUrl);
-        const reqOptions = { ...options, headers: { "Content-Type": "application/json", ...(options.headers || {}) } };
-        const r = await fetch(finalUrl, reqOptions);
-        const text = await r.text();
-        const isJson = (r.headers.get("content-type") || "").includes("application/json");
-        let data = null;
-        if (text && isJson) {
-          try { data = JSON.parse(text); } catch {}
-        }
-        if (!r.ok || (data && data.ok === false)) {
-          const msg = data?.error || data?.message || (text && !isJson ? text.slice(0, 180) : `HTTP ${r.status}`);
-          const err = new Error(`HTTP ${r.status} ${finalUrl}: ${msg}`);
-          err.status = r.status;
-          err.url = finalUrl;
-          err.raw = text;
-          throw err;
-        }
-        if (text && !isJson) throw new Error(`Сервер вернул не-JSON ответ: ${finalUrl}`);
-        return data || { ok: true };
-      } catch (e) {
-        lastError = e;
-        const retriable = [404, 405, 502, 503, 504].includes(Number(e?.status || 0));
-        if (!retriable) break;
-      }
+  async function safeFetchJson(url, options = {}) {
+    const finalUrl = buildApiPath(url);
+    const reqOptions = { ...options };
+    reqOptions.headers = { "Content-Type": "application/json", ...(options.headers || {}) };
+    const r = await fetch(finalUrl, reqOptions);
+    const text = await r.text();
+    const isJson = (r.headers.get("content-type") || "").includes("application/json");
+    let data = null;
+    if (text && isJson) {
+      try { data = JSON.parse(text); } catch {}
     }
-    throw new Error(lastError?.message || "network_request_failed");
+    if (!r.ok || (data && data.ok === false)) {
+      const msg = data?.error || data?.message || (text && !isJson ? text.slice(0, 180) : `HTTP ${r.status}`);
+      throw new Error(msg === "method_not_allowed" ? "Маршрут недоступен для этого метода (405)." : msg);
+    }
+    if (text && !isJson) throw new Error("Сервер вернул не-JSON ответ");
+    return data || { ok: true };
   }
 
   function syncTonTopupUi() {
@@ -1767,7 +1741,6 @@
     linkedWalletAddress = "";
     walletTonBalance = null;
     sendMsg({ type:"wallet_bind", walletAddress: "", userKey });
-    tonOrderInfo.textContent = "";
     syncTonTopupUi();
   };
 
@@ -1799,7 +1772,7 @@
       const payload = await buildTonCommentPayload(ord.comment || "");
       await tonConnectUI.sendTransaction({
         validUntil: Math.floor(Date.now() / 1000) + 600,
-        messages: [{ address: ord.to, amount: ord.amountNano, ...(payload ? { payload } : {}) }]
+        messages: [{ address: ord.to, amount: ord.amountNano, payload: btoa(unescape(encodeURIComponent(ord.comment || ""))) }]
       });
       const ok = await pollTonConfirm(ord.orderId, userId);
       tonOrderInfo.textContent = ok ? `Вы пополнили ${ton} TON успешно` : "Не удалось подтвердить TON за время ожидания";
